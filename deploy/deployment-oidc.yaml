@@ -1,0 +1,87 @@
+# kcp dashboard — in-cluster deployment for the Tilt/kind dev environment, OIDC mode.
+#
+# The OIDC counterpart of deployment.yaml. Instead of mounting a static admin
+# kubeconfig, the BFF terminates OIDC (auth-code + PKCE) against the in-cluster
+# Dex issuer and forwards the user's token to the kcp front-proxy.
+#
+# Split-horizon: the BFF reaches Dex at the SAME issuer URL the browser uses
+# (https://dex.kcp.localhost:8443/dex) — the hostAliases below make that name,
+# and kcp.localhost, resolve to the envoy gateway's ingress IP from inside the
+# pod. KCP_INSECURE=true lets the BFF trust the dev self-signed certs of both
+# the front-proxy and Dex (see server/src/auth/oidc.ts).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kcp-dashboard
+  namespace: default
+  labels:
+    app: kcp-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kcp-dashboard
+  template:
+    metadata:
+      labels:
+        app: kcp-dashboard
+    spec:
+      # Resolve the gateway hostnames to the gateway's fake ingress IP so the
+      # BFF sees the same names as the browser (mirrors kcp's front-proxy pod).
+      hostAliases:
+        - ip: 10.96.2.2
+          hostnames:
+            - kcp.localhost
+            - dex.kcp.localhost
+      containers:
+        - name: dashboard
+          image: kcp-dashboard
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: AUTH_MODE
+              value: "oidc"
+            # Upstream kcp, reached by hostname through the gateway.
+            - name: KCP_BASE_URL
+              value: https://kcp.localhost:8443
+            - name: KCP_INSECURE
+              value: "true"
+            # OIDC: one issuer URL shared by browser + BFF + kcp.
+            - name: OIDC_ISSUER_URL
+              value: https://dex.kcp.localhost:8443/dex
+            - name: OIDC_CLIENT_ID
+              value: kcp-dashboard
+            # Browser-facing callback (BFF is port-forwarded to localhost:8080).
+            - name: OIDC_REDIRECT_URL
+              value: http://localhost:8080/auth/callback
+            - name: SESSION_SECRET
+              value: dev-insecure-session-secret
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kcp-dashboard
+  namespace: default
+  labels:
+    app: kcp-dashboard
+spec:
+  selector:
+    app: kcp-dashboard
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

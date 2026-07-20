@@ -25,9 +25,27 @@ async function init(
 ): Promise<client.Configuration> {
   const server = new URL(oidc.issuerUrl);
 
+  // Build the insecure fetch BEFORE discovery: client.discovery() performs the
+  // .well-known/openid-configuration request itself, so a self-signed https
+  // issuer (dev Dex) fails there unless the custom fetch is passed *into* the
+  // discovery options — attaching it to the returned config afterward is too
+  // late and surfaces as "TypeError: fetch failed" (DEPTH_ZERO_SELF_SIGNED_CERT).
+  let insecureFetch:
+    | ((url: string, opts: Record<string, unknown>) => Promise<Response>)
+    | undefined;
+  if (insecure && server.protocol === "https:") {
+    const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
+    insecureFetch = (url, opts) =>
+      fetch(url, { ...opts, dispatcher } as RequestInit);
+  }
+
   const options: Parameters<typeof client.discovery>[4] = {};
   if (server.protocol === "http:") {
     options.execute = [client.allowInsecureRequests];
+  }
+  if (insecureFetch) {
+    // Used for the discovery request, and retained on the returned config.
+    (options as Record<symbol, unknown>)[client.customFetch] = insecureFetch;
   }
 
   const config = await client.discovery(
@@ -39,13 +57,11 @@ async function init(
     options,
   );
 
-  if (insecure && server.protocol === "https:") {
-    const dispatcher = new Agent({ connect: { rejectUnauthorized: false } });
-    // openid-client honours a per-config custom fetch via this symbol.
-    (config as unknown as Record<symbol, unknown>)[client.customFetch] = (
-      url: string,
-      opts: Record<string, unknown>,
-    ) => fetch(url, { ...opts, dispatcher } as RequestInit);
+  // Ensure token/refresh calls also skip TLS verification (idempotent if
+  // discovery already carried it over).
+  if (insecureFetch) {
+    (config as unknown as Record<symbol, unknown>)[client.customFetch] =
+      insecureFetch;
   }
 
   return config;

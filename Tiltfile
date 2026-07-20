@@ -52,25 +52,56 @@ k8s_yaml(kustomize(TILT + '/kcp-operator'))
 kcp_lib = load_dynamic(TILT + '/kcp_static.Tiltfile')
 deploy_kcp = kcp_lib['deploy_kcp']
 
-extra_shards = [] if os.getenv('KCP_SINGLE_SHARD', '').lower() in ('true', '1', 'yes', 'on') else ['theseus']
-deploy_kcp(base_domain='kcp.localhost', extra_shards=extra_shards)
+# OIDC mode: stand up an in-cluster Dex, make kcp trust it, and run the
+# dashboard in oidc mode. Enable with KCP_OIDC_ENABLED=true (default: no-oidc).
+OIDC = os.getenv('KCP_OIDC_ENABLED', '').lower() in ('true', '1', 'yes', 'on')
 
-# --- the dashboard ----------------------------------------------------------------
-# Runs in no-oidc mode: mounts the admin kubeconfig the operator publishes
-# (secret kcp-frontproxy-kubeconfig) and proxies to the front-proxy Service.
+extra_shards = [] if os.getenv('KCP_SINGLE_SHARD', '').lower() in ('true', '1', 'yes', 'on') else ['theseus']
+
+if OIDC:
+    # dex.Tiltfile is self-contained (Starlark-only), so load_dynamic is safe.
+    deploy_dex = load_dynamic('dex.Tiltfile')['deploy_dex']
+    oidc = deploy_dex(resource_deps=['ingress'])
+
+    # kcp trusts Dex; the extra hostname is added to kcp's hostAliases so the
+    # shards can resolve the issuer (dex.kcp.localhost) to the gateway in-cluster.
+    hostnames = (['kcp.localhost', 'root.kcp.localhost'] +
+                 ['{}.kcp.localhost'.format(s) for s in extra_shards] +
+                 ['dex.kcp.localhost'])
+    # The Dex user is in system:kcp:admin, which kcp's bootstrap policy binds to
+    # cluster-admin — so admin comes straight from the token, no extra RBAC.
+    deploy_kcp(base_domain='kcp.localhost', extra_shards=extra_shards,
+               hostnames=hostnames, oidc=oidc)
+else:
+    deploy_kcp(base_domain='kcp.localhost', extra_shards=extra_shards)
+
+# --- the dashboard -------------------------------------------------------------
 docker_build(
     ref='kcp-dashboard',
     context='.',
     dockerfile='Dockerfile',
     ignore=['node_modules', 'web/dist', 'server/dist', '**/*.log'],
 )
-k8s_yaml('deploy/deployment.yaml')
-k8s_resource(
-    'kcp-dashboard',
-    port_forwards=['8080:8080'],
-    # Wait for the admin kubeconfig secret to be extracted so the mount exists.
-    resource_deps=['kcp-admin extract'],
-    labels='dashboard',
-)
 
-print('kcp dashboard → http://localhost:8080 (no-oidc)')
+if OIDC:
+    # oidc mode: BFF terminates OIDC against Dex; no kubeconfig mount needed.
+    k8s_yaml('deploy/deployment-oidc.yaml')
+    k8s_resource(
+        'kcp-dashboard',
+        port_forwards=['8080:8080'],
+        resource_deps=['dex'],
+        labels='dashboard',
+    )
+    print('kcp dashboard → http://localhost:8080 (oidc via Dex, login: admin / password)')
+else:
+    # no-oidc mode: mounts the admin kubeconfig the operator publishes (secret
+    # kcp-frontproxy-kubeconfig) and proxies to the front-proxy Service.
+    k8s_yaml('deploy/deployment.yaml')
+    k8s_resource(
+        'kcp-dashboard',
+        port_forwards=['8080:8080'],
+        # Wait for the admin kubeconfig secret to be extracted so the mount exists.
+        resource_deps=['kcp-admin extract'],
+        labels='dashboard',
+    )
+    print('kcp dashboard → http://localhost:8080 (no-oidc)')

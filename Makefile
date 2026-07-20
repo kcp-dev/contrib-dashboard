@@ -8,12 +8,17 @@
 
 CLUSTER_NAME ?= kcp-tilt
 KCP_DIR      ?= ../kcp
-KCP_HOSTS    := kcp.localhost root.kcp.localhost theseus.kcp.localhost
+KCP_HOSTS    := kcp.localhost root.kcp.localhost theseus.kcp.localhost dex.kcp.localhost
 
 export KCP_DIR
 
 .PHONY: tilt-up
-tilt-up: kind-up ## Create the kind cluster (if needed) and run tilt up.
+tilt-up: kind-up ## Create the kind cluster (if needed) and run tilt up (no-oidc).
+	tilt up
+
+.PHONY: tilt-up-oidc
+tilt-up-oidc: export KCP_OIDC_ENABLED = true
+tilt-up-oidc: kind-up ## Create the kind cluster (if needed) and run tilt up with in-cluster Dex OIDC.
 	tilt up
 
 .PHONY: kind-up

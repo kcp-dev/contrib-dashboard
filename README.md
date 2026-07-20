@@ -88,14 +88,20 @@ It needs a local kcp checkout for the tilt library and infra manifests. Point
 `KCP_DIR` at it (default `../kcp`, i.e. a sibling clone under `.../kcp-dev/`):
 
 ```bash
+make tilt-up                     # creates the kind cluster (if needed), then tilt up
+# or, if you already have a cluster:
 tilt up                          # uses ../kcp
-# or
 KCP_DIR=/path/to/kcp tilt up
 ```
+
+`make tilt-up` also warns if the `*.kcp.localhost` names don't resolve; add them
+to `/etc/hosts` as it instructs (`127.0.0.1 kcp.localhost root.kcp.localhost
+theseus.kcp.localhost dex.kcp.localhost`).
 
 Options:
 
 - `KCP_SINGLE_SHARD=true` — skip the second (theseus) shard for a leaner cluster.
+- `KCP_OIDC_ENABLED=true` — run in **OIDC mode** with an in-cluster Dex (see below).
 
 Tilt brings up cert-manager, the envoy gateway, etcd, the kcp-operator, the kcp
 shards + front-proxy, extracts the admin kubeconfig, then builds and deploys the
@@ -103,6 +109,46 @@ dashboard — port-forwarded to <http://localhost:8080> (no-oidc). It runs in no
 mode by mounting the operator-published `kcp-frontproxy-kubeconfig` secret and
 proxying to the in-cluster front-proxy Service; it waits for the `kcp-admin
 extract` step so the secret exists first.
+
+### OIDC mode (in-cluster Dex)
+
+```bash
+make tilt-up-oidc                # == KCP_OIDC_ENABLED=true make tilt-up
+```
+
+This additionally deploys **Dex** in the cluster (via [`dex.Tiltfile`](./dex.Tiltfile)),
+served through the same envoy gateway at `https://dex.kcp.localhost:8443/dex`,
+configures kcp to trust it (`deploy_kcp(oidc=...)`, with kcp's `caFileRef` pointing
+at Dex's cert-manager cert), and runs the dashboard from
+[`deploy/deployment-oidc.yaml`](./deploy/deployment-oidc.yaml) in `AUTH_MODE=oidc`.
+
+Open <http://localhost:8080>, click **Sign in**, and log in with **`admin` /
+`password`** (the sample static user). The issuer URL
+`https://dex.kcp.localhost:8443/dex` is one identical string for the browser (via
+`/etc/hosts`), the BFF, and kcp — the pods resolve it to the gateway through a
+`hostAlias`, so add the `dex.kcp.localhost` entry to `/etc/hosts` above.
+
+**Admin rights:** the Dex dev user is in the `system:kcp:admin` group, which
+kcp's bootstrap policy binds to `cluster-admin` — so the OIDC identity gets kcp
+admin straight from the token, no extra RBAC. This needs **dex ≥ v2.45.0**
+(`staticPasswords` gained a `groups` field then; the pinned image in
+[`dex.Tiltfile`](./dex.Tiltfile) is `v2.45.1`). Older dex silently drops the
+field and the user lands with only `system:authenticated`.
+
+> Dex uses in-memory storage, so restarting the dex pod rotates its signing
+> keys. kcp refetches Dex's JWKS on its own, but if a token briefly fails with
+> `failed to verify id token signature` right after a dex restart, give it a
+> minute or `kubectl rollout restart deploy/frontproxy-front-proxy`.
+
+**Reusing Dex from kcp's own Tilt:** `dex.Tiltfile` is self-contained (Starlark
+only, no sibling-file reads), so kcp's `contrib/tilt` Tiltfiles can load it the
+same way:
+
+```python
+deploy_dex = load_dynamic('.../contrib-dashboard/dex.Tiltfile')['deploy_dex']
+oidc = deploy_dex()   # returns the dict deploy_kcp(oidc=...) expects
+deploy_kcp(..., hostnames=[..., 'dex.kcp.localhost'], oidc=oidc)
+```
 
 ## Container image & CI
 
