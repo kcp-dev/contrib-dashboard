@@ -1,0 +1,9 @@
+node_modules
+**/node_modules
+web/dist
+server/dist
+**/*.log
+.git
+.DS_Store
+DESIGN.md
+README.md
