@@ -1,0 +1,81 @@
+# kcp dashboard — in-cluster deployment for the Tilt/kind dev environment.
+#
+# Runs in no-oidc mode: it mounts the admin kubeconfig the kcp-operator publishes
+# for the front-proxy (secret kcp-frontproxy-kubeconfig) and proxies Kubernetes
+# REST to the front-proxy Service. The kubeconfig supplies the client cert; the
+# upstream base URL is overridden to the in-cluster Service DNS and TLS
+# verification is skipped (dev only, cert is issued for kcp.localhost).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kcp-dashboard
+  namespace: default
+  labels:
+    app: kcp-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kcp-dashboard
+  template:
+    metadata:
+      labels:
+        app: kcp-dashboard
+    spec:
+      containers:
+        - name: dashboard
+          image: kcp-dashboard
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: AUTH_MODE
+              value: "none"
+            - name: KUBECONFIG
+              value: /etc/kcp/kubeconfig
+            - name: KCP_BASE_URL
+              value: https://frontproxy-front-proxy.default.svc:8443
+            - name: KCP_INSECURE
+              value: "true"
+            - name: SESSION_SECRET
+              value: dev-insecure-session-secret
+          volumeMounts:
+            - name: kubeconfig
+              mountPath: /etc/kcp
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: kubeconfig
+          secret:
+            # Published by the kcp-operator from kubeconfig-kcp-admin.yaml.
+            secretName: kcp-frontproxy-kubeconfig
+            items:
+              - key: kubeconfig
+                path: kubeconfig
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kcp-dashboard
+  namespace: default
+  labels:
+    app: kcp-dashboard
+spec:
+  selector:
+    app: kcp-dashboard
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
