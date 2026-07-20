@@ -7,6 +7,8 @@ This is a standalone repository (`github.com/kcp-dev/contrib-dashboard`); it
 talks to a kcp cluster over the front-proxy and is developed and released
 independently of kcp.
 
+![kcp dashboard UI](./contrib/images/ui.png)
+
 See [DESIGN.md](./DESIGN.md) for the architecture and roadmap.
 
 ## Layout
