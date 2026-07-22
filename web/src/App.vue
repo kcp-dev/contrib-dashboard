@@ -85,9 +85,15 @@ onMounted(session.load);
 body {
   margin: 0;
   background: #f5f7f8;
+  /* Prevent the whole page from scrolling — each panel scrolls independently */
+  overflow: hidden;
+  height: 100vh;
 }
 .app {
-  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .topbar {
   display: flex;
@@ -98,14 +104,21 @@ body {
   color: #fff;
   height: 56px;
   box-sizing: border-box;
+  flex: none;
 }
 .layout {
   display: flex;
+  flex: 1;
+  min-height: 0;
   align-items: stretch;
+  overflow: hidden;
 }
 .panel {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .brand {
   display: flex;
@@ -186,6 +199,7 @@ body {
   padding: 0.75rem 1.5rem;
   background: #fff;
   border-bottom: 1px solid #eceff1;
+  flex: none;
 }
 .tablinks {
   display: flex;
@@ -198,6 +212,14 @@ body {
 }
 .tabs a.router-link-active {
   color: #1565c0;
+}
+.content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
 }
 .wsctx {
   display: flex;
@@ -215,8 +237,5 @@ body {
   background: #eceff1;
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
-}
-.content {
-  padding: 1.5rem;
 }
 </style>
